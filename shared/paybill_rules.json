@@ -1,0 +1,73 @@
+{
+ "_comment": "Worker 與 tw-relay 共用：上游網址、轉送縣市、車牌規則、timeout；改這裡兩邊都要重新部署／重啟",
+ "paybill": {
+  "TPE": "https://trafficapi.pma.gov.taipei/Parking/PayBill",
+  "NWT": "https://trafficapi.traffic.ntpc.gov.tw/Parking/PayBill",
+  "KEE": "https://park.klcg.gov.tw/TrafficPayBill/Parking/PayBill",
+  "TAO": "https://bill-epark.tycg.gov.tw/Parking/PayBill",
+  "HSZ": "https://histmp.hccg.gov.tw:5443/TrafficPayBill/Parking/PayBill",
+  "HSQ": "https://hcpark.hchg.gov.tw/NationalParkingPayBillInquiry/Parking/PayBill",
+  "MIA": "https://miaoliparking.jotangi.com.tw/TrafficPayBill/Parking/PayBill",
+  "TXG": "http://tcparkingapi.taichung.gov.tw:8081/NationalParkingPayBillInquiry.Api/Parking/PayBill",
+  "CHA": "https://chpark.chcg.gov.tw/TrafficPayBill/Parking/PayBill",
+  "YUN": "https://parking.yunlin.gov.tw/TrafficPayBill/Parking/PayBill",
+  "CYI": "https://parking.chiayi.gov.tw/cypark/api/Parking/PayBill",
+  "CYQ": "https://8voc0wuf1g.execute-api.ap-southeast-1.amazonaws.com/default/chiayi/Parking/PayBill",
+  "TNN": "https://parkingbill.tainan.gov.tw/Parking/PayBill",
+  "KHH": "https://kpp.tbkc.gov.tw/parking/V1/parking/PayBill",
+  "PIF": "https://8voc0wuf1g.execute-api.ap-southeast-1.amazonaws.com/default/pingtung/Parking/PayBill",
+  "NAN": "https://parking.nantou.gov.tw/TrafficPayBill/Parking/PayBill",
+  "ILA": "https://billparking.e-land.gov.tw/Parking/PayBill",
+  "HUA": "https://hl.parchere.com.tw/TrafficPayBill/Parking/PayBill",
+  "TTT": "https://tt.guoyun.com.tw/TrafficPayBill/Parking/PayBill",
+  "KIN": "https://km.guoyun.com.tw/TrafficPayBill/Parking/PayBill",
+  "PEN": "https://parking.penghu.gov.tw/TrafficPayBill/Parking/PayBill"
+ },
+ "relayCities": [
+  "KHH",
+  "HSQ",
+  "CHA",
+  "CYI",
+  "NAN",
+  "ILA",
+  "HUA",
+  "TPE",
+  "HSZ"
+ ],
+ "skipCities": [
+  "NWT",
+  "TAO",
+  "YUN"
+ ],
+ "plate": "^[A-Z0-9一-鿿-]{2,10}$",
+ "timeoutMs": {
+  "upstream": 5000,
+  "relayTotal": 6000,
+  "workerToRelay": 6500,
+  "source": 5000
+ },
+ "gapMs": 1100,
+ "sources": {
+  "pbs": {
+   "url": "https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata",
+   "kind": "json",
+   "maxBytes": 2097152
+  },
+  "fire/KHH": {
+   "url": "https://119dts.fdkc.gov.tw/DTS/caselist/html",
+   "kind": "html",
+   "maxBytes": 262144
+  },
+  "fire/TNN": {
+   "url": "https://119dts.tncfd.gov.tw/DTS/caselist/html",
+   "kind": "html",
+   "maxBytes": 262144
+  },
+  "fire/HCC": {
+   "url": "https://119.hcfd.gov.tw/DTS/caselist/html",
+   "kind": "html",
+   "maxBytes": 262144
+  }
+ },
+ "sourceCacheMs": 60000
+}

@@ -1,0 +1,30 @@
+name = "tdx-parking-proxy"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# 正式版只允許 github.io；本機開發的 localhost 寫在 .dev.vars（不部署）
+[vars]
+ALLOWED_ORIGINS = "https://YOUR-NAME.github.io"
+
+# 不收集 request 內容：關閉 observability／logs，不設 logpush
+[observability]
+enabled = false
+
+[observability.logs]
+enabled = false
+invocation_logs = false
+
+# 路邊停車費查詢 /paybill：每個 IP 每 60 秒最多 3 次查詢（一次查詢＝Worker 內依序打 1–21 縣市）
+# Cloudflare 官方說這個 binding 是寬鬆、最終一致的，只當粗略防濫用
+[[ratelimits]]
+name = "PAYBILL_LIMIT"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 3
+  period = 60
+
+# 機密用 wrangler secret 設定（不要寫進這個檔）：
+#   npx wrangler secret put RELAY_URL   # 例：https://relay.example.com
+#   npx wrangler secret put RELAY_KEY   # 與轉送站 relay_secret.txt 的 key= 相同

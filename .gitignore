@@ -1,0 +1,5 @@
+relay/relay_secret.txt
+worker/.dev.vars
+worker/.wrangler/
+node_modules/
+.DS_Store
