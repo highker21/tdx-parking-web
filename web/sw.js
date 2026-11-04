@@ -1,5 +1,5 @@
 // 只快取靜態檔（頁面、icon、Leaflet）。TDX／轉送回應、token、地圖圖磚一律不進快取。
-const CACHE = 'pk-static-2026-11-04x';
+const CACHE = 'pk-static-2026-11-04y';
 const STATIC = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'];

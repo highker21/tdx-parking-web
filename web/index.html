@@ -73,6 +73,11 @@ ul#listPay{list-style:none;margin:6px 0 0;padding:0 16px 16px}#listPay li{backgr
 .row{display:flex;gap:8px;align-items:center;font-size:16px;margin:5px 0;color:var(--ink)}.tm{font-weight:800;font-variant-numeric:tabular-nums}.sm{font-size:15px;padding:1px 8px;border-radius:6px;flex:none}
 .tab.on{background:var(--brand);border-color:var(--brand);color:#fff}
 .subtabs{display:flex;gap:6px;padding:0 16px 8px}.subtab{flex:1;font-size:15px;font-weight:700;padding:8px 2px}.subtab.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.stfavs{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 8px;align-items:center}.stfavs .meta{width:100%}
+.stfav{display:inline-flex;align-items:stretch;max-width:100%;border:1px solid var(--line);border-radius:999px;background:var(--card);overflow:hidden}
+.stfav button{border:0;border-radius:0;background:transparent;padding:6px 4px 6px 12px;font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stfav button.x{padding:6px 12px 6px 8px;color:var(--mute);font-weight:400}.stfav.on{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand)}
+#listTransit li .star{flex:none;border:0;background:transparent;font-size:22px;line-height:1;padding:2px 4px;color:#d97706}
 .bk{display:inline-block;font-size:12px;font-weight:700;padding:1px 6px;border-radius:6px;border:1px solid var(--line);margin-left:6px;vertical-align:2px}
 .me-icon{position:relative}
 .me-dot{position:absolute;left:5px;top:5px;width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px #2563eb,0 2px 6px #0008}
@@ -134,6 +139,7 @@ ul#listPay{list-style:none;margin:6px 0 0;padding:0 16px 16px}#listPay li{backgr
 <ul id="listTraffic" hidden></ul>
 <div id="newsTraffic" hidden></div>
 <div id="transitSubs" class="subtabs" role="tablist" aria-label="到站類別" hidden><button class="subtab" data-sub="bus" role="tab">🚌 公車</button><button class="subtab" data-sub="tra" role="tab">🚆 火車</button><button class="subtab" data-sub="thsr" role="tab">🚄 高鐵</button><button class="subtab" data-sub="metro" role="tab">🚇 捷運</button></div>
+<div id="stFavBar" class="stfavs" hidden></div>
 <div id="warnsTransit" hidden></div>
 <ul id="listTransit" hidden></ul>
 <div id="payForm" class="payform" hidden>
@@ -1421,23 +1427,65 @@ function railRow(t){
 // 到站次分頁：一次查詢照舊抓四類，只切換顯示；選擇記在這支手機
 let transitSub = ['bus', 'tra', 'thsr', 'metro'].includes(store.get('pk_tsub')) ? store.get('pk_tsub') : 'bus';
 function renderSubs(){ for (const b of document.querySelectorAll('#transitSubs .subtab')) { const on = b.dataset.sub === transitSub; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); } }
-document.querySelectorAll('#transitSubs .subtab').forEach(b => b.onclick = () => { transitSub = b.dataset.sub; store.set('pk_tsub', transitSub); renderSubs(); renderTransit(); });
-renderSubs();
+document.querySelectorAll('#transitSubs .subtab').forEach(b => b.onclick = () => { transitSub = b.dataset.sub; store.set('pk_tsub', transitSub); renderSubs(); renderStFavs(); renderTransit(); });
+// 我的最愛車站：只存這支手機（pk_stfavs，與地點最愛 pk_favs 分開）；點一下只查那一站，不用定位
+// 台鐵／高鐵／捷運直接用存下的站碼查；公車用存下的 StopUID 到站位清單找回整站（找不到才用存下的 StopUID）
+const ST_FAV_MAX = 30, ST_MODE = {bus: '🚌', tra: '🚆 台鐵', thsr: '🚄 高鐵', metro: '🚇'};
+const stKey = f => [f.m, f.sys || f.city || '', f.id].join('|');
+const stLabel = f => f.m === 'metro' ? `${METRO_NAME[f.sys]} ${stn(f.name)}` : f.m === 'bus' ? f.name : stn(f.name);
+function stFavs(){
+  const a = getJSON('pk_stfavs'), seen = new Set();
+  return (Array.isArray(a) ? a : []).filter(f => {
+    if (!f || typeof f !== 'object' || !ST_MODE[f.m] || typeof f.id !== 'string' || typeof f.name !== 'string' || !f.name.trim() || f.name.length > 30) return false;
+    if (!(Number.isFinite(f.lat) && Number.isFinite(f.lon) && f.lat >= 21.5 && f.lat <= 26.5 && f.lon >= 118 && f.lon <= 123)) return false;
+    const ok = f.m === 'bus' ? STOP_UID.test(f.id) && CITIES[f.city] && Array.isArray(f.uids) && f.uids.every(u => typeof u === 'string' && STOP_UID.test(u))
+      : f.m === 'metro' ? !!METRO_NAME[f.sys] && /^[A-Za-z0-9-]{1,12}$/.test(f.id) : /^\d{4}$/.test(f.id);
+    if (!ok || seen.has(stKey(f))) return false;
+    seen.add(stKey(f)); return true;
+  }).slice(0, ST_FAV_MAX);
+}
+const isStFav = f => stFavs().some(x => stKey(x) === stKey(f));
+function toggleStFav(f){
+  const a = stFavs(), k = stKey(f), had = a.some(x => stKey(x) === k);
+  if (!had && a.length >= ST_FAV_MAX) return rstatus(`最愛車站最多 ${ST_FAV_MAX} 個，請先刪掉一些`);
+  store.set('pk_stfavs', JSON.stringify(had ? a.filter(x => stKey(x) !== k) : [...a, f]));
+  rstatus(had ? `已從最愛移除「${stLabel(f)}」` : `已加到最愛：${stLabel(f)}`);
+  renderStFavs(); renderTransit();
+}
+function renderStFavs(){
+  const bar = $('stFavBar'), a = stFavs().filter(f => f.m === transitSub), cur = lastTransit && lastTransit.fav ? stKey(lastTransit.fav) : '';
+  bar.replaceChildren();
+  if (!a.length) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = '⭐ 點車站右邊的 ☆，就能把常用車站加到這裡，之後一點就查'; bar.append(m); return; }
+  for (const f of a) {
+    const chip = document.createElement('span'), go = document.createElement('button'), x = document.createElement('button');
+    chip.className = 'stfav' + (stKey(f) === cur ? ' on' : '');
+    go.type = x.type = 'button'; go.textContent = '⭐ ' + stLabel(f); go.title = '查這一站';
+    go.onclick = () => queryTransit(true, f);
+    x.className = 'x'; x.textContent = '✕'; x.setAttribute('aria-label', `從最愛移除 ${stLabel(f)}`);
+    x.onclick = () => { if (confirm(`從最愛移除「${stLabel(f)}」？`)) toggleStFav(f); };
+    chip.append(go, x); bar.append(chip);
+  }
+}
+renderSubs(); renderStFavs();
 function renderTransit(){
   if (!lastTransit) return;
   const now = Date.now(), T = lastTransit;
   transitLayer.clearLayers();
   const ul = $('listTransit'); ul.innerHTML = '';
-  const card = (icon, title, d, body, p) => {
+  const card = (icon, title, d, body, p, fav) => {
     const li = document.createElement('li');
     li.innerHTML = `<span class="dot" style="background:${HEX.ok}"></span><div class="grow"><div class="name">${icon} ${esc(title)}</div><div class="meta">${d === null ? '' : d >= 1000 ? (d / 1000).toFixed(1) + ' 公里' : Math.round(d) + ' 公尺'}</div>${body}${p ? `<div class="nav">${navLinks({lat: p[0], lon: p[1]}, 'walk')}</div>` : ''}</div>`;
     if (p) { li.querySelector('.name').addEventListener('click', () => map.setView(p, 17)); L.circleMarker(p, {radius: 8, color: '#111', weight: 2, fillColor: '#2563eb', fillOpacity: .9}).bindPopup(`${icon} ${esc(title)}`).addTo(transitLayer); }
+    if (fav) { const on = isStFav(fav), b = document.createElement('button'); b.type = 'button'; b.className = 'star'; b.textContent = on ? '★' : '☆';
+      b.setAttribute('aria-label', on ? `從最愛移除 ${title}` : `把 ${title} 加到最愛`); b.onclick = () => toggleStFav(fav); li.append(b); }
     ul.appendChild(li);
   };
   const empty = s => { const li = document.createElement('li'); li.innerHTML = `<div class="grow meta">${s}</div>`; ul.appendChild(li); };
+  // 查的是某個最愛車站：其他類別沒有查，請使用者按查詢回到附近
+  if (T.fav && transitSub !== T.fav.m) { empty(`目前顯示最愛車站「${esc(stLabel(T.fav))}」；按「查詢」回到附近車站`); return; }
   // 公車
   if (transitSub === 'bus' && T.bus) {
-    if (!T.bus.near.length) empty(`附近 ${BUS_R} 公尺沒有公車站`);
+    if (!T.bus.near.length) empty(T.fav ? '找不到這個最愛站的站位資料（可能已更新），請刪掉後在附近重新加入' : `附近 ${BUS_R} 公尺沒有公車站`);
     for (const [i, {s, d}] of T.bus.near.entries()) {
       const rows = [];
       if (T.bus.eta) {
@@ -1454,7 +1502,7 @@ function renderTransit(){
         : rows.slice(0, more ? 6 : 99).map(r => `<div class="row"><span class="grow"><b>${esc(r.route)}</b></span><b class="t-${r.tone} sm">${esc(r.text)}</b></div>`).join('')
           + (more ? `<button class="more" data-more="b${i}">更多…（還有 ${rows.length - 6} 條路線）</button>` : '')
           + `<div class="meta">資料時間 ${hm(T.bus.at)}</div>`;
-      card('🚌', s[0], d, body, [s[1], s[2]]);
+      card('🚌', s[0], d, body, [s[1], s[2]], T.fav || {m: 'bus', city: T.city, id: s[3][0], name: s[0], lat: s[1], lon: s[2], uids: s[3].slice(0, 60)});
     }
   }
   // 台鐵／高鐵
@@ -1464,7 +1512,7 @@ function renderTransit(){
     const list = (R.trains || []).filter(t => t.time !== null && t.time + (t.delay || 0) * 60000 >= now - 60000).sort((a, b) => a.time - b.time).slice(0, 4);
     const note = k === 'thsr' ? '<div class="meta">依時刻表（高鐵沒有即時到站資料）</div>' : R.live ? '<div class="meta">即時看板（含誤點）</div>' : R.trains ? '<div class="meta">依今日時刻表</div>' : '';
     const body = !R.trains ? `<div class="meta">${R.err ? esc(R.err) : '班次更新中…'}</div>` : (list.length ? list.map(railRow).join('') : '<div class="meta">接下來沒有班次</div>') + note;
-    card(icon, `${label} ${stn(R.st[1])}`, R.d, body, [R.st[2], R.st[3]]);
+    card(icon, `${label} ${stn(R.st[1])}`, R.d, body, [R.st[2], R.st[3]], {m: k, id: R.st[0], name: R.st[1], lat: R.st[2], lon: R.st[3]});
   }
   // 捷運
   if (transitSub === 'metro' && T.metro) {
@@ -1476,13 +1524,14 @@ function renderTransit(){
       else if (!M.live) body = `<div class="meta">${M.err ? esc(M.err) : '即時進站更新中…'}</div>`;
       else { const rows = M.live.map(e => { const [text, tone] = metroText(e, now); return `<div class="row"><span class="grow">${esc(e.line)} 往 ${esc(e.dest)}</span><b class="t-${tone} sm">${esc(text)}</b></div>`; });
         body = (rows.length ? rows.join('') : '<div class="meta">目前沒有進站資料</div>') + `<div class="meta">資料時間 ${hm(M.at)}</div>`; }
-      card('🚇', `${METRO_NAME[M.sys]} ${stn(M.st[1])}`, M.d, body, [M.st[2], M.st[3]]);
+      card('🚇', `${METRO_NAME[M.sys]} ${stn(M.st[1])}`, M.d, body, [M.st[2], M.st[3]], {m: 'metro', sys: M.sys, id: M.st[0], name: M.st[1], lat: M.st[2], lon: M.st[3]});
     }
   }
   if (!ul.children.length) empty(transitBusy ? '更新中…' : '這一類這次沒有查到，請看上方提示或重新查詢');
   ul.querySelectorAll('button[data-more]').forEach(b => b.onclick = () => { transitMore[b.dataset.more] = true; renderTransit(); });
 }
-async function queryTransit(manual){
+// fav：只查這個最愛車站（不定位、不查其他類別）
+async function queryTransit(manual, fav = null){
   if (transitBusy) return;
   if (manual) { const cd = gate.cooldown(); if (cd > 0) { rstatus(`請等 ${Math.ceil(cd/1000)} 秒再查詢（避免超過資料來源限制）`); return; } }
   transitBusy = true; if (manual) gate.click(); tick(); rwarn([]);
@@ -1494,17 +1543,23 @@ async function queryTransit(manual){
       $('listTransit').innerHTML = NOKEY_HTML('公車／軌道到站');
       rstatus('尚未設定 TDX 金鑰'); return;
     }
-    const h = manual || !here || Date.now() - here.at > 120000 ? await locate(rstatus) : here;
-    const {lat, lon, city} = h, auth = await token();
+    const F = fav, h = F ? null : manual || !here || Date.now() - here.at > 120000 ? await locate(rstatus) : here;
+    const {lat, lon, city} = F || h, auth = await token();
     transitMore = {};
-    const T = lastTransit = {lat, lon, city, seq: h.seq, bus: null, tra: null, thsr: null, metro: null};
+    if (F) { transitSub = F.m; store.set('pk_tsub', F.m); renderSubs(); }
+    // 最愛查詢沿用目前的 seq，切回到站分頁時不會被自動的附近查詢蓋掉
+    const T = lastTransit = {lat, lon, city, seq: F ? (here ? here.seq : null) : h.seq, fav: F, bus: null, tra: null, thsr: null, metro: null};
+    renderStFavs();
     const alive = () => lastTransit === T;
     // 1. 公車：最近的站位依距離累加，StopUID 到 40 個為止（1–4 站）
-    try {
+    if (!F || F.m === 'bus') try {
       sent = true;
       const st = await busStations(city, auth);
       const near = [], uids = [];
-      for (const x of nearest(st, lat, lon, BUS_R, BUS_MAX_ST)) {
+      if (F) {
+        const s = st.find(s => s[3].includes(F.id)) || st.find(s => s[0] === F.name && dist(F.lat, F.lon, s[1], s[2]) < 80) || (F.uids.length ? [F.name, F.lat, F.lon, F.uids] : null);
+        if (s) { near.push({s, d: null}); uids.push(...s[3]); }
+      } else for (const x of nearest(st, lat, lon, BUS_R, BUS_MAX_ST)) {
         if (near.length && uids.length + x.s[3].length > BUS_MAX_UID) break;
         near.push(x); uids.push(...x.s[3]);
       }
@@ -1526,9 +1581,9 @@ async function queryTransit(manual){
     } catch (e) { notes.push('公車：' + (e.message || '查詢失敗')); if (T.bus) T.bus.eta = T.bus.eta || new Map(); }
     alive() && renderTransit();
     // 2. 台鐵：即時看板（約前後 30 分、含誤點）；看板沒車再查今日時刻表
-    try {
-      const st = await railStations('tra_st', '/v3/Rail/TRA/Station', 'StationID,StationName,StationPosition', 'Stations', auth, '台鐵');
-      const [n] = nearest(st, lat, lon, RAIL_R, 1, 2);
+    if (!F || F.m === 'tra') try {
+      sent = true;
+      const [n] = F ? [{s: [F.id, F.name, F.lat, F.lon], d: null}] : nearest(await railStations('tra_st', '/v3/Rail/TRA/Station', 'StationID,StationName,StationPosition', 'Stations', auth, '台鐵'), lat, lon, RAIL_R, 1, 2);
       T.tra = n ? {st: n.s, d: n.d, trains: null, live: false} : {st: null};
       alive() && renderTransit();
       if (n) {
@@ -1548,9 +1603,9 @@ async function queryTransit(manual){
     } catch (e) { notes.push('台鐵：' + (e.message || '查詢失敗')); if (T.tra && T.tra.st) T.tra.err = e.message; }
     alive() && renderTransit();
     // 3. 高鐵：只有時刻表（日期用台灣日期）
-    try {
-      const st = await railStations('thsr_st', '/v2/Rail/THSR/Station', 'StationID,StationName,StationPosition', null, auth, '高鐵');
-      const [n] = nearest(st, lat, lon, RAIL_R, 1, 2);
+    if (!F || F.m === 'thsr') try {
+      sent = true;
+      const [n] = F ? [{s: [F.id, F.name, F.lat, F.lon], d: null}] : nearest(await railStations('thsr_st', '/v2/Rail/THSR/Station', 'StationID,StationName,StationPosition', null, auth, '高鐵'), lat, lon, RAIL_R, 1, 2);
       T.thsr = n ? {st: n.s, d: n.d, trains: null} : {st: null};
       alive() && renderTransit();
       if (n) {
@@ -1562,14 +1617,15 @@ async function queryTransit(manual){
     alive() && renderTransit();
     // 4. 捷運／輕軌：這個縣市有的系統，各取最近一站；看板一次抓整個系統，前端挑站
     T.metro = [];
-    for (const sys of METRO_BY_CITY[city] || []) {
+    if (F) { if (F.m === 'metro') { sent = true; T.metro.push({sys: F.sys, st: [F.id, F.name, F.lat, F.lon], d: null, live: null}); } }
+    else for (const sys of METRO_BY_CITY[city] || []) {
       try {
         const st = await railStations('metro_' + sys, `/v2/Rail/Metro/Station/${sys}`, 'StationID,StationName,StationPosition', null, auth, METRO_NAME[sys], /^[A-Za-z0-9-]{1,12}$/);
         const [n] = nearest(st, lat, lon, RAIL_R, 1, 2);
         if (n) T.metro.push({sys, st: n.s, d: n.d, live: null});
       } catch (e) { notes.push(METRO_NAME[sys] + '：' + (e.message || '查詢失敗')); }
     }
-    T.metro.sort((a, b) => a.d - b.d); T.metro = T.metro.slice(0, 2);
+    if (!F) { T.metro.sort((a, b) => a.d - b.d); T.metro = T.metro.slice(0, 2); }
     alive() && renderTransit();
     for (const M of T.metro) {
       if (!METRO_LIVE.has(M.sys)) continue;
@@ -1583,7 +1639,7 @@ async function queryTransit(manual){
       } catch (e) { M.err = e.message; notes.push(METRO_NAME[M.sys] + '：' + (e.message || '查詢失敗')); }
       alive() && renderTransit();
     }
-    rstatus(`公車 500 公尺、軌道 3 公里內 · ${hm(Date.now())} 更新`);
+    rstatus(F ? `⭐ ${stLabel(F)} · ${hm(Date.now())} 更新` : `公車 500 公尺、軌道 3 公里內 · ${hm(Date.now())} 更新`);
   } catch (e) {
     rstatus(e instanceof ApiError ? e.message : '公車／軌道查詢失敗，請稍後再試');
   } finally {
@@ -1842,7 +1898,7 @@ function setMode(m){
   if (mode === m) return;
   mode = m;
   for (const [k, tab] of [['park', 'tabPark'], ['bike', 'tabBike'], ['traffic', 'tabTraffic'], ['transit', 'tabTransit'], ['pay', 'tabPay']]) { $(tab).classList.toggle('on', m === k); $(tab).setAttribute('aria-selected', m === k); }
-  for (const [id, k] of [['list', 'park'], ['warns', 'park'], ['listBike', 'bike'], ['warnsBike', 'bike'], ['trafficSubs', 'traffic'], ['listTraffic', 'traffic'], ['warnsTraffic', 'traffic'], ['newsTraffic', 'traffic'], ['transitSubs', 'transit'], ['warnsTransit', 'transit'], ['listTransit', 'transit'], ['payForm', 'pay'], ['warnsPay', 'pay'], ['listPay', 'pay']]) $(id).hidden = m !== k;
+  for (const [id, k] of [['list', 'park'], ['warns', 'park'], ['listBike', 'bike'], ['warnsBike', 'bike'], ['trafficSubs', 'traffic'], ['listTraffic', 'traffic'], ['warnsTraffic', 'traffic'], ['newsTraffic', 'traffic'], ['transitSubs', 'transit'], ['stFavBar', 'transit'], ['warnsTransit', 'transit'], ['listTransit', 'transit'], ['payForm', 'pay'], ['warnsPay', 'pay'], ['listPay', 'pay']]) $(id).hidden = m !== k;
   applyTrafficSub();
   // 到站分頁的範圍固定（公車 500 公尺、軌道 3 公里），不顯示範圍／排序選單
   $('radius').hidden = $('sort').hidden = m === 'transit' || m === 'pay';
