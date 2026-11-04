@@ -27,6 +27,8 @@ button{font:inherit;border:1px solid var(--line);background:var(--card);color:va
 button.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
 button:disabled{opacity:.6}
 button.primary:disabled{opacity:1;background:#5b6661;border-color:#5b6661;color:#fff}
+#mapsearch{display:flex;gap:6px;margin:0 16px 8px}#mapsearch input{flex:1;min-width:0;font-size:16px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)}#mapsearch button{flex:none}
+#mapResults{margin:-2px 16px 8px}
 #map{height:46vh;min-height:260px;margin:0 16px;border-radius:14px;border:1px solid var(--line)}
 .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px}
 .bar select{font:inherit;padding:7px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
@@ -104,6 +106,8 @@ ul#listPay{list-style:none;margin:6px 0 0;padding:0 16px 16px}#listPay li{backgr
   <button id="tabTransit" class="tab" role="tab" aria-selected="false">🚌 到站</button>
   <button id="tabPay" class="tab" role="tab" aria-selected="false">🧾 路邊停車費<br>查詢</button>
 </div>
+<form id="mapsearch" role="search"><input id="mapQ" type="search" maxlength="60" placeholder="🔎 搜尋目的地，查那裡的停車場" autocomplete="off" enterkeyhint="search"><button id="btnMapQ" type="submit">搜尋</button></form>
+<ul id="mapResults" class="favlist" hidden></ul>
 <div id="map"></div>
 <div class="bar">
   <button id="btnQuery" class="primary">查詢附近停車</button>
@@ -167,7 +171,7 @@ ul#listPay{list-style:none;margin:6px 0 0;padding:0 16px 16px}#listPay li{backgr
   <p>2. 點停車場可一鍵用 Google 或 Apple 地圖導航。</p>
   <p>3. 停車：新北、新竹不用金鑰；其他縣市、YouBike、路況要 TDX 金鑰——<a href="https://tdx.transportdata.tw/" target="_blank" rel="noopener">到 TDX 官網免費申請</a>，再填到「設定」。</p>
   <p>4. iPhone 可用 Safari「分享 → 加入主畫面」當 App 用；加到主畫面後金鑰要重新輸入一次。</p>
-  <p class="meta">定位只在你的手機上計算距離，不會送到我們的轉送伺服器；地圖圖資與縣市判斷由 OpenStreetMap 提供，會看到你所在的大致範圍。到站分頁查公車時會送出附近站牌的編號（等於透露你大約在哪幾個站牌附近），台鐵／高鐵送出最近一站的代碼。停車分頁按路邊路段的「看每一格」時，會送出那一段的編號（透露你大約在哪條路附近）。選了「我的最愛」地點時不會定位，改用該地點的座標；用地址搜尋新增最愛時，輸入的文字會送到 OpenStreetMap。</p>
+  <p class="meta">定位只在你的手機上計算距離，不會送到我們的轉送伺服器；地圖圖資與縣市判斷由 OpenStreetMap 提供，會看到你所在的大致範圍。到站分頁查公車時會送出附近站牌的編號（等於透露你大約在哪幾個站牌附近），台鐵／高鐵送出最近一站的代碼。停車分頁按路邊路段的「看每一格」時，會送出那一段的編號（透露你大約在哪條路附近）。選了「我的最愛」地點時不會定位，改用該地點的座標；用地圖上方的搜尋列或地址搜尋新增最愛時，輸入的文字會送到 OpenStreetMap。</p>
   <div class="row"><button id="btnIntroOk" class="primary">知道了</button></div>
 </dialog>
 
@@ -670,7 +674,7 @@ const status = s => setStatus('park', s);
 // ---- 定位（兩個分頁共用；切分頁不重新定位） ----
 let here = null, hereSeq = 0;   // seq 用模組計數：換最愛時 here 會清成 null，不能從 here.seq 接著算
 function meMarker(pos, fav){
-  return L.marker(pos, {fav: !!fav, icon: L.divIcon({className: fav ? 'me-icon fav' : 'me-icon', html: `<span class="me-pulse"></span><span class="me-dot"></span><span class="me-tag">${fav ? '⭐ ' + esc(fav.name) : '我在哪'}</span>`, iconSize: [28, 28], iconAnchor: [14, 14]}), zIndexOffset: 1000, keyboard: false}).addTo(map);
+  return L.marker(pos, {fav: !!fav, icon: L.divIcon({className: fav ? 'me-icon fav' : 'me-icon', html: `<span class="me-pulse"></span><span class="me-dot"></span><span class="me-tag">${fav ? (fav.id === '__tmp' ? '🔎 ' : '⭐ ') + esc(fav.name) : '我在哪'}</span>`, iconSize: [28, 28], iconAnchor: [14, 14]}), zIndexOffset: 1000, keyboard: false}).addTo(map);
 }
 async function locate(say){
   // 選了最愛地點：直接用最愛座標，不定位
@@ -1705,10 +1709,15 @@ function favs(){
   const a = getJSON('pk_favs');
   return Array.isArray(a) ? a.filter(f => f && typeof f.id === 'string' && typeof f.name === 'string' && f.name.trim() && inTw(f.lat, f.lon)).slice(0, FAV_MAX) : [];
 }
-function curFav(){ const id = store.get('pk_where'); return id ? favs().find(f => f.id === id) || null : null; }
+// 搜尋列選的目的地：只放記憶體、不存 pk_where，重開頁面就回到原本的查詢地點
+let tmpWhere = null;   // {name, lat, lon, on}
+function curFav(){
+  if (tmpWhere && tmpWhere.on) return {id: '__tmp', name: tmpWhere.name, lat: tmpWhere.lat, lon: tmpWhere.lon};
+  const id = store.get('pk_where'); return id ? favs().find(f => f.id === id) || null : null;
+}
 function renderWhere(){
   const s = $('where'), cur = curFav();
-  s.replaceChildren(new Option('📍 目前位置', ''), ...favs().map(f => new Option('⭐ ' + f.name, f.id)), new Option('⭐ 管理我的最愛…', '__manage'));
+  s.replaceChildren(new Option('📍 目前位置', ''), ...(tmpWhere ? [new Option('🔎 ' + tmpWhere.name, '__tmp')] : []), ...favs().map(f => new Option('⭐ ' + f.name, f.id)), new Option('⭐ 管理我的最愛…', '__manage'));
   s.value = cur ? cur.id : '';
 }
 function saveFavs(a){ store.set('pk_favs', JSON.stringify(a)); renderWhere(); renderFavList(); }
@@ -1757,7 +1766,8 @@ $('btnFavAddOk').onclick = () => {
 $('where').onchange = () => {
   const v = $('where').value;
   if (v === '__manage') { renderWhere(); return openFav(); }
-  v ? store.set('pk_where', v) : store.del('pk_where');
+  if (tmpWhere) tmpWhere.on = v === '__tmp';
+  if (v !== '__tmp') v ? store.set('pk_where', v) : store.del('pk_where');
   here = null;   // 換了查詢中心：下次查詢重新取點
   if (me) { map.removeLayer(me); me = null; } if (ring) { map.removeLayer(ring); ring = null; } myPos = null;
   const f = curFav();
@@ -1771,6 +1781,13 @@ $('btnFavHere').onclick = async () => {
   try { const p = await position(); favSay(''); addFavAt(p.latitude, p.longitude, '目前位置'); } catch (e) { favSay(e.message || '定位失敗'); }
 };
 // OpenStreetMap Nominatim：只在按「搜尋」時送一次，至少隔 1 秒（使用政策）
+// OpenStreetMap Nominatim 地址／地名搜尋（最愛與地圖搜尋列共用）：只在按「搜尋」時送，限台灣、最多 5 筆
+async function geoSearch(q){
+  const r = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({format: 'jsonv2', q, countrycodes: 'tw', limit: '5', 'accept-language': 'zh-TW'}));
+  if (!r.ok) throw new Error();
+  const j = await r.json();
+  return (Array.isArray(j) ? j : []).map(h => ({name: String(h.name || '').slice(0, 20), full: String(h.display_name || h.name || '').slice(0, 120), lat: +h.lat, lon: +h.lon})).filter(h => h.full && inTw(h.lat, h.lon));
+}
 let favSearching = false;
 $('btnFavSearch').onclick = async () => {
   const q = $('favQ').value.trim();
@@ -1778,10 +1795,7 @@ $('btnFavSearch').onclick = async () => {
   favSearching = true; $('btnFavSearch').disabled = true; favSay('搜尋中…');
   const ul = $('favResults'); ul.replaceChildren();
   try {
-    const r = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({format: 'jsonv2', q, countrycodes: 'tw', limit: '5', 'accept-language': 'zh-TW'}));
-    if (!r.ok) throw new Error();
-    const j = await r.json();
-    const hits = (Array.isArray(j) ? j : []).map(h => ({name: String(h.name || ''), full: String(h.display_name || h.name || ''), lat: +h.lat, lon: +h.lon})).filter(h => h.full && inTw(h.lat, h.lon));
+    const hits = await geoSearch(q);
     favSay(hits.length ? '點一筆存成最愛' : '找不到，換個說法，或在地圖上長按');
     for (const h of hits) { const li = document.createElement('li'), b = mkBtn(h.full, () => addFavAt(h.lat, h.lon, h.name || q)); b.className = 'favhit'; li.append(b); ul.append(li); }
   } catch { favSay('搜尋失敗，請稍後再試'); }
@@ -1789,6 +1803,38 @@ $('btnFavSearch').onclick = async () => {
 };
 $('favQ').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('btnFavSearch').click(); } };
 $('btnFavClose').onclick = () => $('dlgFav').close();
+// 地圖搜尋列：選一筆 → 當暫時查詢地點，切到停車分頁並查詢（冷卻中只移地圖、提示秒數）
+let mapSearching = false;
+$('mapsearch').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('mapQ').value.trim(), ul = $('mapResults');
+  if (!q || mapSearching) return;
+  mapSearching = true; $('btnMapQ').disabled = true; setStatus(mode, '搜尋地點中…');
+  ul.replaceChildren(); ul.hidden = true;
+  try {
+    const hits = await geoSearch(q);
+    if (!hits.length) { setStatus(mode, '找不到這個地點，換個說法再試'); return; }
+    setStatus(mode, '點一筆就查那裡的停車場');
+    for (const h of hits) {
+      const li = document.createElement('li'), name = h.name || q.slice(0, 20);
+      const go = mkBtn(h.full, () => pickPlace({name, lat: h.lat, lon: h.lon})); go.className = 'favhit';
+      li.append(go, mkBtn('⭐ 存', () => addFavAt(h.lat, h.lon, name)));
+      ul.append(li);
+    }
+    ul.hidden = false;
+  } catch { setStatus(mode, '搜尋失敗，請稍後再試'); }
+  finally { mapSearching = false; setTimeout(() => { $('btnMapQ').disabled = false; }, 1000); }
+};
+function pickPlace(p){
+  $('mapResults').hidden = true; $('mapResults').replaceChildren(); $('mapQ').blur();
+  tmpWhere = {...p, on: true}; renderWhere();   // pk_where 不動：重開頁面回到原本選的地點
+  here = null;
+  if (me) { map.removeLayer(me); me = null; } if (ring) { map.removeLayer(ring); ring = null; } myPos = null;
+  if (mode !== 'park') setMode('park');
+  const cd = gate.cooldown();
+  if (busy || cd > 0) { map.setView([p.lat, p.lon], 16); setStatus('park', `查詢中心：🔎 ${p.name}，${cd > 0 ? Math.ceil(cd / 1000) + ' 秒後' : '目前這次查完後'}可以按查詢`); return; }
+  query();
+}
 renderWhere();
 
 // ---- 分頁切換：不重新定位；YouBike／路況／到站這次定位還沒資料才自動查一次 ----
@@ -1804,6 +1850,7 @@ function setMode(m){
   $('sortFee').hidden = $('sortFee').disabled = m !== 'park';   // iOS 原生選單不吃 hidden，靠 disabled
   if (m !== 'park' && $('sort').value === 'fee') $('sort').value = 'dist';
   $('map').hidden = m === 'pay';   // 停車費分頁不用地圖
+  $('mapsearch').hidden = m === 'pay'; if (m === 'pay') $('mapResults').hidden = true;
   if (m !== 'pay') map.invalidateSize();
   for (const [lyr, k] of [[layer, 'park'], [spotLayer, 'park'], [bikeLayer, 'bike'], [trafficLayer, 'traffic'], [transitLayer, 'transit']]) m === k ? lyr.addTo(map) : map.removeLayer(lyr);
   $('status').textContent = st[m];
