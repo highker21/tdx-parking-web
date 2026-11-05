@@ -210,7 +210,7 @@ ul#listPay{list-style:none;margin:6px 0 0;padding:0 16px 16px}#listPay li{backgr
   停車費率為各機關提供的文字說明，僅供參考，以現場公告為準。<br>
   地圖：© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors。<br>
   資料處理邏輯參考 R 大（Rick Lan）的 <a href="https://github.com/herizon1054/opview" target="_blank" rel="noopener">opview</a>（© 2026 Rick Lan，<a href="https://github.com/herizon1054/opview/blob/01f0f20/LICENSE" target="_blank" rel="noopener">非商業授權</a>），特此致謝。<br>
-  工具版本：2026-11-04
+  工具版本：2026-11-05
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
@@ -1352,6 +1352,9 @@ async function queryTraffic(manual){
 // 隱私：公車會送出附近 1–4 個站位的 StopUID（≈ 透露在哪幾個站位附近）；台鐵／高鐵送最近一站代碼（公里級）；捷運看板抓整個系統
 const transitLayer = L.layerGroup();
 let lastTransit = null, transitBusy = false, transitMore = {};
+// 查詢進行中（例如切到到站分頁自動定位要好幾秒）點最愛會被直接丟掉、最後顯示附近車站 →
+// 改成：進行中就中止目前這次、結束後馬上查最愛；冷卻中就倒數後自動查；點下去 chip 立刻亮
+let transitGen = 0, favWait = null, favTimer = null;
 const rstatus = s => setStatus('transit', s);
 const rwarn = list => warnTo('warnsTransit', list);
 const TRANSIT_STALE = 180000, TRANSIT_V = 1, BUS_R = 500, RAIL_R = 3000, BUS_MAX_ST = 4, BUS_MAX_UID = 40, BUS_PAGE = 2000;
@@ -1453,18 +1456,25 @@ function toggleStFav(f){
   renderStFavs(); renderTransit();
 }
 function renderStFavs(){
-  const bar = $('stFavBar'), a = stFavs().filter(f => f.m === transitSub), cur = lastTransit && lastTransit.fav ? stKey(lastTransit.fav) : '';
+  const bar = $('stFavBar'), a = stFavs().filter(f => f.m === transitSub), cur = favWait ? stKey(favWait) : lastTransit && lastTransit.fav ? stKey(lastTransit.fav) : '';
   bar.replaceChildren();
   if (!a.length) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = '⭐ 點車站右邊的 ☆，就能把常用車站加到這裡，之後一點就查'; bar.append(m); return; }
   for (const f of a) {
     const chip = document.createElement('span'), go = document.createElement('button'), x = document.createElement('button');
     chip.className = 'stfav' + (stKey(f) === cur ? ' on' : '');
     go.type = x.type = 'button'; go.textContent = '⭐ ' + stLabel(f); go.title = '查這一站';
-    go.onclick = () => queryTransit(true, f);
+    go.onclick = () => favQuery(f);
     x.className = 'x'; x.textContent = '✕'; x.setAttribute('aria-label', `從最愛移除 ${stLabel(f)}`);
     x.onclick = () => { if (confirm(`從最愛移除「${stLabel(f)}」？`)) toggleStFav(f); };
     chip.append(go, x); bar.append(chip);
   }
+}
+function favQuery(f){
+  clearTimeout(favTimer); favTimer = null; favWait = f; renderStFavs();
+  if (transitBusy) { transitGen++; rstatus(`⭐ ${stLabel(f)}：停下目前的查詢，馬上改查這一站…`); return; }
+  const cd = gate.cooldown();
+  if (cd > 0) { rstatus(`⭐ ${stLabel(f)}：${Math.ceil(cd/1000)} 秒後自動查（避免超過資料來源限制）`); favTimer = setTimeout(() => favQuery(f), cd + 100); return; }
+  queryTransit(true, f);
 }
 renderSubs(); renderStFavs();
 function renderTransit(){
@@ -1533,8 +1543,14 @@ function renderTransit(){
 // fav：只查這個最愛車站（不定位、不查其他類別）
 async function queryTransit(manual, fav = null){
   if (transitBusy) return;
-  if (manual) { const cd = gate.cooldown(); if (cd > 0) { rstatus(`請等 ${Math.ceil(cd/1000)} 秒再查詢（避免超過資料來源限制）`); return; } }
+  if (!fav && favWait) {   // 最愛在排隊（冷卻倒數中）：自動的附近查詢不要蓋掉它；手動按「查詢」＝改查附近，取消排隊
+    if (!manual) return;
+    clearTimeout(favTimer); favTimer = null; favWait = null; renderStFavs();
+  }
+  if (manual) { const cd = gate.cooldown(); if (cd > 0) { if (fav) return favQuery(fav); rstatus(`請等 ${Math.ceil(cd/1000)} 秒再查詢（避免超過資料來源限制）`); return; } }
   transitBusy = true; if (manual) gate.click(); tick(); rwarn([]);
+  if (fav) { clearTimeout(favTimer); favTimer = null; favWait = null; }
+  const gen = ++transitGen, stop = () => gen !== transitGen;   // 被點最愛中止
   const notes = [];
   let sent = false;
   try {
@@ -1545,6 +1561,7 @@ async function queryTransit(manual, fav = null){
     }
     const F = fav, h = F ? null : manual || !here || Date.now() - here.at > 120000 ? await locate(rstatus) : here;
     const {lat, lon, city} = F || h, auth = await token();
+    if (stop()) return;
     transitMore = {};
     if (F) { transitSub = F.m; store.set('pk_tsub', F.m); renderSubs(); }
     // 最愛查詢沿用目前的 seq，切回到站分頁時不會被自動的附近查詢蓋掉
@@ -1580,6 +1597,7 @@ async function queryTransit(manual, fav = null){
       }
     } catch (e) { notes.push('公車：' + (e.message || '查詢失敗')); if (T.bus) T.bus.eta = T.bus.eta || new Map(); }
     alive() && renderTransit();
+    if (stop()) return;
     // 2. 台鐵：即時看板（約前後 30 分、含誤點）；看板沒車再查今日時刻表
     if (!F || F.m === 'tra') try {
       sent = true;
@@ -1602,6 +1620,7 @@ async function queryTransit(manual, fav = null){
       }
     } catch (e) { notes.push('台鐵：' + (e.message || '查詢失敗')); if (T.tra && T.tra.st) T.tra.err = e.message; }
     alive() && renderTransit();
+    if (stop()) return;
     // 3. 高鐵：只有時刻表（日期用台灣日期）
     if (!F || F.m === 'thsr') try {
       sent = true;
@@ -1615,6 +1634,7 @@ async function queryTransit(manual, fav = null){
       }
     } catch (e) { notes.push('高鐵：' + (e.message || '查詢失敗')); if (T.thsr && T.thsr.st) T.thsr.err = e.message; }
     alive() && renderTransit();
+    if (stop()) return;
     // 4. 捷運／輕軌：這個縣市有的系統，各取最近一站；看板一次抓整個系統，前端挑站
     T.metro = [];
     if (F) { if (F.m === 'metro') { sent = true; T.metro.push({sys: F.sys, st: [F.id, F.name, F.lat, F.lon], d: null, live: null}); } }
@@ -1628,6 +1648,7 @@ async function queryTransit(manual, fav = null){
     if (!F) { T.metro.sort((a, b) => a.d - b.d); T.metro = T.metro.slice(0, 2); }
     alive() && renderTransit();
     for (const M of T.metro) {
+      if (stop()) return;
       if (!METRO_LIVE.has(M.sys)) continue;
       try {
         rstatus(`查詢${METRO_NAME[M.sys]}即時進站…`);
@@ -1645,6 +1666,7 @@ async function queryTransit(manual, fav = null){
   } finally {
     if (!sent && manual) gate.reset();
     rwarn(notes); transitBusy = false; tick(); if (lastTransit) renderTransit();
+    if (stop() && favWait) { const f = favWait; setTimeout(() => favQuery(f), 0); }
   }
 }
 
